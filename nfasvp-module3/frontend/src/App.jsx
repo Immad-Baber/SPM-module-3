@@ -37,8 +37,8 @@ function TopNavBar({ onNavigate, role }) {
     <header className="h-16 flex justify-between items-center w-full px-8 sticky top-0 z-50 backdrop-blur-md bg-opacity-90 bg-primary border-b border-primary-container/20">
       <div className="flex items-center gap-10">
         <div className="flex flex-col cursor-pointer" onClick={() => onNavigate("home")}>
-          <h1 className="text-lg font-black text-white uppercase tracking-tight leading-none">Nexus Pro</h1>
-          <p className="text-[10px] font-bold tracking-[0.2em] uppercase text-tertiary-fixed-dim">Professional</p>
+          <h1 className="text-lg font-black text-white uppercase tracking-tight leading-none">National Freelance & Skill Verification</h1>
+          <p className="text-[10px] font-bold tracking-[0.2em] uppercase text-tertiary-fixed-dim">Platform</p>
         </div>
         <nav className="hidden xl:flex items-center gap-8">
           <button onClick={() => onNavigate("home")} className="text-[11px] font-black uppercase tracking-widest text-white border-b-2 border-tertiary-fixed-dim pb-1">Overview</button>
@@ -263,8 +263,8 @@ function RoleSelection({ onSelectRole }) {
   return (
     <div className="min-h-screen bg-surface flex flex-col items-center justify-center p-6">
       <div className="mb-12 text-center">
-        <h1 className="text-4xl font-black text-primary uppercase tracking-tight mb-2">Nexus Pro</h1>
-        <p className="text-sm font-bold tracking-[0.3em] uppercase text-tertiary-container">Professional Ecosystem</p>
+        <h1 className="text-4xl font-black text-primary uppercase tracking-tight mb-2">National Freelance & Skill Verification</h1>
+        <p className="text-sm font-bold tracking-[0.3em] uppercase text-tertiary-container">Platform</p>
       </div>
       
       <h2 className="text-2xl font-extrabold mb-8 text-primary tracking-tight">Select Your Perspective</h2>
@@ -365,7 +365,7 @@ export default function App() {
             {activeComponent}
           </div>
           <footer className="mt-auto px-8 py-10 bg-surface-container-low text-center border-t border-outline-variant/10">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Nexus Professional © 2026 • Editorial Engine Design Protocol v1.0</p>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">National Freelance & Skill Verification Platform © 2026 • National Freelance & Skill Verification Platform Pro v1.0</p>
           </footer>
         </main>
       </div>
