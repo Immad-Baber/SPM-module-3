@@ -5,6 +5,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    container_name: nfasvp-backend
     ports:
       - "4003:4003"
     env_file:
@@ -12,6 +13,11 @@ services:
     volumes:
       - ./backend:/app
       - /app/node_modules
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4003/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - nfasvp-network
 
@@ -19,6 +25,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    container_name: nfasvp-frontend
     ports:
       - "5173:5173"
     env_file:
