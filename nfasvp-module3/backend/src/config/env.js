@@ -9,8 +9,11 @@
  */
 
 const REQUIRED_VARS = [
-  'SUPABASE_URL',
-  'SUPABASE_SERVICE_ROLE_KEY',
+  'DB_HOST',
+  'DB_PORT',
+  'DB_NAME',
+  'DB_USER',
+  'DB_PASSWORD',
   'PORT',
   'MODULE1_JWT_SECRET',
   'MODULE6_BASE_URL',
@@ -33,10 +36,13 @@ const env = {
   nodeEnv: process.env.NODE_ENV || 'development',
   isProduction: process.env.NODE_ENV === 'production',
 
-  // Supabase
-  supabase: {
-    url: process.env.SUPABASE_URL,
-    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  // Local PostgreSQL
+  db: {
+    host    : process.env.DB_HOST,
+    port    : parseInt(process.env.DB_PORT, 10) || 5432,
+    name    : process.env.DB_NAME,
+    user    : process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
   },
 
   // Module 1 — Auth (JWT validation)

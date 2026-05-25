@@ -1,27 +1,11 @@
 'use strict';
 
 /**
- * supabaseClient.js — Data Access Layer singleton
+ * supabaseClient.js — DEPRECATED
  *
- * This is the ONLY file that imports and instantiates the Supabase client.
- * Rule: Only repositories (dataAccess layer) may import from this file.
- *       Services in the application layer MUST NOT import this directly.
+ * This module has been replaced by pgClient.js (local PostgreSQL via node-postgres).
+ * This file is kept only for backward-compatibility in case anything still imports it.
+ * It simply re-exports the pg Pool from pgClient.
  */
 
-const { createClient } = require('@supabase/supabase-js');
-require('dotenv').config();
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  {
-    auth: {
-      // Disable auto-refresh — this is a server-side client using service role key
-      autoRefreshToken: false,
-      persistSession: false,
-      detectSessionInUrl: false,
-    },
-  }
-);
-
-module.exports = supabase;
+module.exports = require('./pgClient');

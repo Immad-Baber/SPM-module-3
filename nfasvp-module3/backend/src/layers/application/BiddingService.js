@@ -194,7 +194,7 @@ async function acceptBid(jobId, bidId, clientId) {
     deadline_at  : job.expires_at || null,
   };
 
-  // ── 4. ACID transaction via Supabase RPC ──────────────────────────────────
+  // ── 4. ACID transaction via local PostgreSQL BEGIN/COMMIT ────────────────
   // Atomically: accepts bid, rejects all others, updates job, creates project.
   const { data: projectRows, error: rpcErr } = await bidRepo.acceptBidTransaction(
     jobId, bidId, projectData

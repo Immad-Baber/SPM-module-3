@@ -1,119 +1,282 @@
 'use strict';
 
 /**
- * gigRepository.js — Data Access Layer
+ * gigRepository.js — Data Access Layer (local PostgreSQL)
  * All queries against gigs, gig_pricing_tiers, gig_portfolio_samples,
  * and gig_required_skills tables.
  */
 
-const supabase = require('../../config/supabaseClient');
+const pool = require('../../config/pgClient');
+
+function ok(row)   { return { data: row  || null, error: null }; }
+function fail(err) { return { data: null, error: err };          }
+
+// ─── helper: aggregate nested JSON from multiple query rows ──────────────────
+
+/**
+ * Build the rich gig object that joins pricing_tiers, portfolio_samples
+ * and required_skills in one query using JSON aggregation.
+ */
+const GIG_FULL_SQL = `
+  SELECT
+    g.*,
+    json_build_object('id', c.id, 'name', c.name, 'slug', c.slug) AS category,
+    COALESCE(
+      json_agg(DISTINCT jsonb_build_object(
+        'id', pt.id, 'tier', pt.tier, 'package_name', pt.package_name,
+        'description', pt.description, 'price', pt.price,
+        'delivery_days', pt.delivery_days, 'revisions', pt.revisions,
+        'deliverables', pt.deliverables
+      )) FILTER (WHERE pt.id IS NOT NULL), '[]'
+    ) AS pricing_tiers,
+    COALESCE(
+      json_agg(DISTINCT jsonb_build_object(
+        'id', ps.id, 'title', ps.title, 'file_url', ps.file_url,
+        'file_type', ps.file_type, 'sort_order', ps.sort_order
+      )) FILTER (WHERE ps.id IS NOT NULL), '[]'
+    ) AS portfolio_samples,
+    COALESCE(
+      json_agg(DISTINCT jsonb_build_object(
+        'id', grs.id,
+        'tag', json_build_object('id', mt.id, 'name', mt.name, 'slug', mt.slug, 'is_verified', mt.is_verified)
+      )) FILTER (WHERE grs.id IS NOT NULL), '[]'
+    ) AS required_skills
+  FROM gigs g
+  LEFT JOIN marketplace_categories c  ON c.id  = g.category_id
+  LEFT JOIN gig_pricing_tiers     pt  ON pt.gig_id = g.id
+  LEFT JOIN gig_portfolio_samples ps  ON ps.gig_id = g.id
+  LEFT JOIN gig_required_skills   grs ON grs.gig_id = g.id
+  LEFT JOIN marketplace_tags      mt  ON mt.id = grs.tag_id
+`;
 
 async function createGig(gigData) {
-  return supabase.from('gigs').insert({ status: 'draft', ...gigData }).select().single();
+  try {
+    const { freelancer_id, category_id, title, description, thumbnail_url } = gigData;
+    const sql = `
+      INSERT INTO gigs (freelancer_id, category_id, title, description, thumbnail_url, status)
+      VALUES ($1, $2, $3, $4, $5, 'draft')
+      RETURNING *`;
+    const { rows } = await pool.query(sql, [
+      freelancer_id, category_id || null, title, description, thumbnail_url || null,
+    ]);
+    return ok(rows[0]);
+  } catch (err) { return fail(err); }
 }
 
 async function getGigById(id) {
-  return supabase
-    .from('gigs')
-    .select(`*, category:marketplace_categories(id, name, slug),
-      pricing_tiers:gig_pricing_tiers(id, tier, package_name, description, price, delivery_days, revisions, deliverables),
-      portfolio_samples:gig_portfolio_samples(id, title, file_url, file_type, sort_order),
-      required_skills:gig_required_skills(id, tag:marketplace_tags(id, name, slug, is_verified))`)
-    .eq('id', id).single();
+  try {
+    const sql = `${GIG_FULL_SQL} WHERE g.id = $1 GROUP BY g.id, c.id`;
+    const { rows } = await pool.query(sql, [id]);
+    return ok(rows[0]);
+  } catch (err) { return fail(err); }
 }
 
 async function getGigsByFreelancer(freelancerId, filters = {}) {
-  const { status, page = 1, limit = 10 } = filters;
-  const from = (page - 1) * limit;
-  let query = supabase
-    .from('gigs')
-    .select('id, title, status, avg_rating, review_count, orders_count, thumbnail_url, created_at, pricing_tiers:gig_pricing_tiers(tier, price)', { count: 'exact' })
-    .eq('freelancer_id', freelancerId)
-    .order('created_at', { ascending: false })
-    .range(from, from + limit - 1);
-  if (status) query = query.eq('status', status);
-  return query;
+  try {
+    const { status, page = 1, limit = 10 } = filters;
+    const offset = (page - 1) * limit;
+    const params = [freelancerId];
+    let where = 'WHERE g.freelancer_id = $1';
+
+    if (status) {
+      params.push(status);
+      where += ` AND g.status = $${params.length}`;
+    }
+
+    const countRes = await pool.query(
+      `SELECT COUNT(*) AS total FROM gigs g ${where}`, params
+    );
+    const count = parseInt(countRes.rows[0].total, 10);
+
+    params.push(limit, offset);
+    const sql = `
+      SELECT g.id, g.title, g.status, g.avg_rating, g.review_count,
+             g.orders_count, g.thumbnail_url, g.created_at,
+             COALESCE(json_agg(json_build_object('tier', pt.tier, 'price', pt.price))
+               FILTER (WHERE pt.id IS NOT NULL), '[]') AS pricing_tiers
+      FROM gigs g
+      LEFT JOIN gig_pricing_tiers pt ON pt.gig_id = g.id
+      ${where}
+      GROUP BY g.id
+      ORDER BY g.created_at DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}`;
+    const { rows } = await pool.query(sql, params);
+    return { data: rows, error: null, count };
+  } catch (err) { return { data: null, error: err, count: 0 }; }
 }
 
 async function getAllGigs(filters = {}) {
-  const { category_id, is_featured, min_rating, sort = 'newest', page = 1, limit = 10 } = filters;
-  const from = (page - 1) * limit;
-  
-  let query = supabase
-    .from('gigs')
-    .select(`id, title, thumbnail_url, avg_rating, review_count, orders_count, is_featured, freelancer_id, created_at,
-      category:marketplace_categories(id, name, slug),
-      pricing_tiers:gig_pricing_tiers(tier, price, delivery_days),
-      required_skills:gig_required_skills(tag:marketplace_tags(id, name, slug))`, { count: 'exact' })
-    .eq('status', 'live');
+  try {
+    const { category_id, is_featured, min_rating, sort = 'newest', page = 1, limit = 10 } = filters;
+    const offset = (page - 1) * limit;
+    const params = [];
+    const conditions = [`g.status = 'live'`];
 
-  // Sorting
-  if (sort === 'newest') {
-    query = query.order('created_at', { ascending: false });
-  } else if (sort === 'price_low') {
-    query = query.order('gig_pricing_tiers(price)', { ascending: true });
-  } else if (sort === 'rating') {
-    query = query.order('avg_rating', { ascending: false });
-  } else {
-    query = query.order('is_featured', { ascending: false }).order('avg_rating', { ascending: false });
-  }
+    if (category_id) { params.push(category_id); conditions.push(`g.category_id = $${params.length}`); }
+    if (is_featured !== undefined) { params.push(is_featured); conditions.push(`g.is_featured = $${params.length}`); }
+    if (min_rating)  { params.push(min_rating);  conditions.push(`g.avg_rating >= $${params.length}`); }
 
-  query = query.range(from, from + limit - 1);
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  if (category_id)               query = query.eq('category_id', category_id);
-  if (is_featured !== undefined)  query = query.eq('is_featured', is_featured);
-  if (min_rating)                query = query.gte('avg_rating', min_rating);
-  
-  return query;
+    // Count
+    const countRes = await pool.query(
+      `SELECT COUNT(*) AS total FROM gigs g ${where}`, params
+    );
+    const count = parseInt(countRes.rows[0].total, 10);
+
+    let orderBy;
+    if (sort === 'newest')    orderBy = 'g.created_at DESC';
+    else if (sort === 'rating') orderBy = 'g.avg_rating DESC';
+    else                       orderBy = 'g.is_featured DESC, g.avg_rating DESC';
+
+    params.push(limit, offset);
+    const sql = `
+      SELECT
+        g.id, g.title, g.thumbnail_url, g.avg_rating, g.review_count,
+        g.orders_count, g.is_featured, g.freelancer_id, g.created_at,
+        json_build_object('id', c.id, 'name', c.name, 'slug', c.slug) AS category,
+        COALESCE(json_agg(DISTINCT jsonb_build_object('tier', pt.tier, 'price', pt.price, 'delivery_days', pt.delivery_days))
+          FILTER (WHERE pt.id IS NOT NULL), '[]') AS pricing_tiers,
+        COALESCE(json_agg(DISTINCT jsonb_build_object(
+          'tag', json_build_object('id', mt.id, 'name', mt.name, 'slug', mt.slug)))
+          FILTER (WHERE grs.id IS NOT NULL), '[]') AS required_skills
+      FROM gigs g
+      LEFT JOIN marketplace_categories c  ON c.id  = g.category_id
+      LEFT JOIN gig_pricing_tiers     pt  ON pt.gig_id = g.id
+      LEFT JOIN gig_required_skills   grs ON grs.gig_id = g.id
+      LEFT JOIN marketplace_tags      mt  ON mt.id = grs.tag_id
+      ${where}
+      GROUP BY g.id, c.id
+      ORDER BY ${orderBy}
+      LIMIT $${params.length - 1} OFFSET $${params.length}`;
+    const { rows } = await pool.query(sql, params);
+    return { data: rows, error: null, count };
+  } catch (err) { return { data: null, error: err, count: 0 }; }
 }
 
 async function updateGig(id, updates) {
-  return supabase.from('gigs').update(updates).eq('id', id).select().single();
+  try {
+    const allowed = ['category_id', 'title', 'description', 'thumbnail_url', 'status', 'is_featured'];
+    const fields  = Object.keys(updates).filter((k) => allowed.includes(k));
+    if (fields.length === 0) return ok(null);
+
+    const setClauses = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
+    const values     = [...fields.map((f) => updates[f]), id];
+
+    const sql = `UPDATE gigs SET ${setClauses}, updated_at = NOW() WHERE id = $${values.length} RETURNING *`;
+    const { rows } = await pool.query(sql, values);
+    return ok(rows[0]);
+  } catch (err) { return fail(err); }
 }
 
 async function deactivateGig(id) {
-  return supabase.from('gigs').update({ status: 'paused' }).eq('id', id).select('id, status').single();
+  try {
+    const sql = `UPDATE gigs SET status = 'paused', updated_at = NOW() WHERE id = $1 RETURNING id, status`;
+    const { rows } = await pool.query(sql, [id]);
+    return ok(rows[0]);
+  } catch (err) { return fail(err); }
 }
 
 async function countActiveGigsByFreelancer(freelancerId) {
-  return supabase
-    .from('gigs')
-    .select('id', { count: 'exact', head: true })
-    .eq('freelancer_id', freelancerId)
-    .eq('status', 'live');
+  try {
+    const sql = `SELECT COUNT(*) AS total FROM gigs WHERE freelancer_id = $1 AND status = 'live'`;
+    const { rows } = await pool.query(sql, [freelancerId]);
+    return { data: null, error: null, count: parseInt(rows[0].total, 10) };
+  } catch (err) { return { data: null, error: err, count: 0 }; }
 }
 
 async function addPricingTier(gigId, tierData) {
-  return supabase
-    .from('gig_pricing_tiers')
-    .upsert({ ...tierData, gig_id: gigId }, { onConflict: 'gig_id,tier' })
-    .select().single();
+  try {
+    const { tier, package_name, description, price, delivery_days, revisions, deliverables } = tierData;
+    const sql = `
+      INSERT INTO gig_pricing_tiers (gig_id, tier, package_name, description, price, delivery_days, revisions, deliverables)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (gig_id, tier) DO UPDATE SET
+        package_name  = EXCLUDED.package_name,
+        description   = EXCLUDED.description,
+        price         = EXCLUDED.price,
+        delivery_days = EXCLUDED.delivery_days,
+        revisions     = EXCLUDED.revisions,
+        deliverables  = EXCLUDED.deliverables
+      RETURNING *`;
+    const { rows } = await pool.query(sql, [
+      gigId, tier,
+      package_name  || null,
+      description   || null,
+      price,
+      delivery_days,
+      revisions     || '1',
+      deliverables  || null,
+    ]);
+    return ok(rows[0]);
+  } catch (err) { return fail(err); }
 }
 
 async function addPortfolioSample(gigId, sampleData) {
-  return supabase.from('gig_portfolio_samples').insert({ ...sampleData, gig_id: gigId }).select().single();
+  try {
+    const { title, file_url, file_type, sort_order } = sampleData;
+    const sql = `
+      INSERT INTO gig_portfolio_samples (gig_id, title, file_url, file_type, sort_order)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING *`;
+    const { rows } = await pool.query(sql, [
+      gigId, title || null, file_url, file_type || null, sort_order || 0,
+    ]);
+    return ok(rows[0]);
+  } catch (err) { return fail(err); }
 }
 
 async function addRequiredTag(gigId, tagId) {
-  return supabase.from('gig_required_skills').insert({ gig_id: gigId, tag_id: tagId }).select().single();
+  try {
+    const sql = `
+      INSERT INTO gig_required_skills (gig_id, tag_id) VALUES ($1, $2)
+      ON CONFLICT (gig_id, tag_id) DO NOTHING
+      RETURNING *`;
+    const { rows } = await pool.query(sql, [gigId, tagId]);
+    return ok(rows[0]);
+  } catch (err) { return fail(err); }
 }
 
 async function searchGigs(query, filters = {}) {
-  const { category_id, min_rating, page = 1, limit = 10 } = filters;
-  const from = (page - 1) * limit;
-  let dbQuery = supabase
-    .from('gigs')
-    .select(`id, title, thumbnail_url, avg_rating, review_count, orders_count, freelancer_id,
-      category:marketplace_categories(id, name, slug),
-      pricing_tiers:gig_pricing_tiers(tier, price, delivery_days),
-      required_skills:gig_required_skills(tag:marketplace_tags(id, name, slug))`, { count: 'exact' })
-    .eq('status', 'live')
-    .or(`title.ilike.%${query}%,description.ilike.%${query}%`)
-    .order('avg_rating', { ascending: false })
-    .range(from, from + limit - 1);
-  if (category_id) dbQuery = dbQuery.eq('category_id', category_id);
-  if (min_rating)  dbQuery = dbQuery.gte('avg_rating', min_rating);
-  return dbQuery;
+  try {
+    const { category_id, min_rating, page = 1, limit = 10 } = filters;
+    const offset = (page - 1) * limit;
+    const params = [`%${query}%`, `%${query}%`];
+    const conditions = [`g.status = 'live'`, `(g.title ILIKE $1 OR g.description ILIKE $2)`];
+
+    if (category_id) { params.push(category_id); conditions.push(`g.category_id = $${params.length}`); }
+    if (min_rating)  { params.push(min_rating);  conditions.push(`g.avg_rating >= $${params.length}`); }
+
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const countRes = await pool.query(
+      `SELECT COUNT(*) AS total FROM gigs g ${where}`, params
+    );
+    const count = parseInt(countRes.rows[0].total, 10);
+
+    params.push(limit, offset);
+    const sql = `
+      SELECT
+        g.id, g.title, g.thumbnail_url, g.avg_rating, g.review_count,
+        g.orders_count, g.freelancer_id,
+        json_build_object('id', c.id, 'name', c.name, 'slug', c.slug) AS category,
+        COALESCE(json_agg(DISTINCT jsonb_build_object('tier', pt.tier, 'price', pt.price, 'delivery_days', pt.delivery_days))
+          FILTER (WHERE pt.id IS NOT NULL), '[]') AS pricing_tiers,
+        COALESCE(json_agg(DISTINCT jsonb_build_object(
+          'tag', json_build_object('id', mt.id, 'name', mt.name, 'slug', mt.slug)))
+          FILTER (WHERE grs.id IS NOT NULL), '[]') AS required_skills
+      FROM gigs g
+      LEFT JOIN marketplace_categories c  ON c.id  = g.category_id
+      LEFT JOIN gig_pricing_tiers     pt  ON pt.gig_id = g.id
+      LEFT JOIN gig_required_skills   grs ON grs.gig_id = g.id
+      LEFT JOIN marketplace_tags      mt  ON mt.id = grs.tag_id
+      ${where}
+      GROUP BY g.id, c.id
+      ORDER BY g.avg_rating DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}`;
+    const { rows } = await pool.query(sql, params);
+    return { data: rows, error: null, count };
+  } catch (err) { return { data: null, error: err, count: 0 }; }
 }
 
 module.exports = {
