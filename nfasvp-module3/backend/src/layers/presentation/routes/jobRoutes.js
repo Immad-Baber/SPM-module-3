@@ -10,11 +10,10 @@ const jobValidators = require('../../../utils/validators/jobValidators');
 const handleValidationErrors = require('../../../utils/validators/handleValidationErrors');
 const { success } = require('../../../utils/responseFormatter');
 
-// All job routes require authentication
-router.use(authMiddleware);
+// Global authMiddleware removed to allow public access to GET routes
 
 // POST /api/v1/jobs - Create a new job (Client only)
-router.post('/', requireRole('client'), jobValidators.createJob, handleValidationErrors, async (req, res, next) => {
+router.post('/', authMiddleware, requireRole('client'), jobValidators.createJob, handleValidationErrors, async (req, res, next) => {
   try {
     const job = await jobService.createJob(req.user.id, req.body);
     return success(res, job, 201);
@@ -24,7 +23,7 @@ router.post('/', requireRole('client'), jobValidators.createJob, handleValidatio
 });
 
 // GET /api/v1/jobs/dashboard - Get jobs posted by the logged-in client
-router.get('/dashboard', requireRole('client'), async (req, res, next) => {
+router.get('/dashboard', authMiddleware, requireRole('client'), async (req, res, next) => {
   try {
     const filters = {
       status: req.query.status,
@@ -68,7 +67,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // PUT /api/v1/jobs/:id - Update an existing job (Client only)
-router.put('/:id', requireRole('client'), jobValidators.updateJob, handleValidationErrors, async (req, res, next) => {
+router.put('/:id', authMiddleware, requireRole('client'), jobValidators.updateJob, handleValidationErrors, async (req, res, next) => {
   try {
     const updatedJob = await jobService.updateJob(req.params.id, req.user.id, req.body);
     return success(res, updatedJob);
@@ -78,7 +77,7 @@ router.put('/:id', requireRole('client'), jobValidators.updateJob, handleValidat
 });
 
 // DELETE /api/v1/jobs/:id - Delete (cancel) an open job (Client only)
-router.delete('/:id', requireRole('client'), async (req, res, next) => {
+router.delete('/:id', authMiddleware, requireRole('client'), async (req, res, next) => {
   try {
     await jobService.deleteJob(req.params.id, req.user.id);
     return success(res, { message: 'Job successfully deleted' });
@@ -88,7 +87,7 @@ router.delete('/:id', requireRole('client'), async (req, res, next) => {
 });
 
 // GET /api/v1/jobs/:id/bids - Get bids for a specific job (Client only)
-router.get('/:id/bids', requireRole('client'), async (req, res, next) => {
+router.get('/:id/bids', authMiddleware, requireRole('client'), async (req, res, next) => {
   try {
     const bids = await biddingService.getJobBids(req.params.id, req.user.id);
     return success(res, bids);

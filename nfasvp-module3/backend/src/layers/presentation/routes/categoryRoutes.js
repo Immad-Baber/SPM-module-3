@@ -8,8 +8,7 @@ const categoryValidators = require('../../../utils/validators/categoryValidators
 const handleValidationErrors = require('../../../utils/validators/handleValidationErrors');
 const { success } = require('../../../utils/responseFormatter');
 
-// All category routes require authentication
-router.use(authMiddleware);
+// Global authMiddleware removed to allow public access to GET routes
 
 // GET /api/v1/categories - Fetch all active categories (nested tree)
 router.get('/', async (req, res, next) => {
@@ -32,7 +31,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // POST /api/v1/categories - Create category (Admin only)
-router.post('/', requireRole('admin'), categoryValidators.createCategory, handleValidationErrors, async (req, res, next) => {
+router.post('/', authMiddleware, requireRole('admin'), categoryValidators.createCategory, handleValidationErrors, async (req, res, next) => {
   try {
     const newCategory = await categoryService.createCategory(req.user.id, req.body);
     return success(res, newCategory, 201);
@@ -42,7 +41,7 @@ router.post('/', requireRole('admin'), categoryValidators.createCategory, handle
 });
 
 // PUT /api/v1/categories/:id - Update category (Admin only)
-router.put('/:id', requireRole('admin'), categoryValidators.updateCategory, handleValidationErrors, async (req, res, next) => {
+router.put('/:id', authMiddleware, requireRole('admin'), categoryValidators.updateCategory, handleValidationErrors, async (req, res, next) => {
   try {
     const updatedCategory = await categoryService.updateCategory(req.params.id, req.user.id, req.body);
     return success(res, updatedCategory);

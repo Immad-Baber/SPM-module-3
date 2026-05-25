@@ -9,11 +9,10 @@ const gigValidators = require('../../../utils/validators/gigValidators');
 const handleValidationErrors = require('../../../utils/validators/handleValidationErrors');
 const { success } = require('../../../utils/responseFormatter');
 
-// All gig routes require authentication
-router.use(authMiddleware);
+// Global authMiddleware removed to allow public access to GET routes
 
 // POST /api/v1/gigs - Create a new gig (Freelancer only)
-router.post('/', requireRole('freelancer'), gigValidators.createGig, handleValidationErrors, async (req, res, next) => {
+router.post('/', authMiddleware, requireRole('freelancer'), gigValidators.createGig, handleValidationErrors, async (req, res, next) => {
   try {
     const gig = await gigService.createGig(req.user.id, req.body);
     return success(res, gig, 201);
@@ -23,7 +22,7 @@ router.post('/', requireRole('freelancer'), gigValidators.createGig, handleValid
 });
 
 // GET /api/v1/gigs/my-gigs - Get gigs by logged-in freelancer
-router.get('/my-gigs', requireRole('freelancer'), async (req, res, next) => {
+router.get('/my-gigs', authMiddleware, requireRole('freelancer'), async (req, res, next) => {
   try {
     const filters = {
       status: req.query.status,
@@ -69,7 +68,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // PUT /api/v1/gigs/:id - Update an existing gig (Freelancer only)
-router.put('/:id', requireRole('freelancer'), gigValidators.updateGig, handleValidationErrors, async (req, res, next) => {
+router.put('/:id', authMiddleware, requireRole('freelancer'), gigValidators.updateGig, handleValidationErrors, async (req, res, next) => {
   try {
     const updatedGig = await gigService.updateGig(req.params.id, req.user.id, req.body);
     return success(res, updatedGig);
@@ -79,7 +78,7 @@ router.put('/:id', requireRole('freelancer'), gigValidators.updateGig, handleVal
 });
 
 // DELETE /api/v1/gigs/:id - Deactivate a gig (Freelancer only)
-router.delete('/:id', requireRole('freelancer'), async (req, res, next) => {
+router.delete('/:id', authMiddleware, requireRole('freelancer'), async (req, res, next) => {
   try {
     await gigService.deactivateGig(req.params.id, req.user.id);
     return success(res, { message: 'Gig successfully deactivated' });
@@ -89,7 +88,7 @@ router.delete('/:id', requireRole('freelancer'), async (req, res, next) => {
 });
 
 // POST /api/v1/gigs/:id/samples - Upload portfolio sample (Freelancer only)
-router.post('/:id/samples', requireRole('freelancer'), async (req, res, next) => {
+router.post('/:id/samples', authMiddleware, requireRole('freelancer'), async (req, res, next) => {
   try {
     const sample = await gigService.uploadPortfolioSample(req.params.id, req.user.id, req.body);
     return success(res, sample, 201);
