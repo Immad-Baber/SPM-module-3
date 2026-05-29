@@ -25,14 +25,29 @@ import ProjectDetail        from "./pages/projects/G03_ProjectDetail.jsx";
 import Notifications        from "./pages/system/G03_Notifications.jsx";
 
 // ── API Service Layer (backend integration) ───────────────────────────────────
-import { setAuthToken, loadStoredToken, checkHealth } from "./services/api.js";
-import { getDevToken } from "./services/devAuth.js";
+import { setAuthToken, loadStoredToken, checkHealth, jobApi, gigApi, bidApi, projectApi } from "./services/api.js";
+import { DEV_USERS, getDevTokenForUser } from "./services/devAuth.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Components extracted from template
 // ─────────────────────────────────────────────────────────────────────────────
 
-function TopNavBar({ onNavigate, role }) {
+function decodeJwtPayload(token) {
+  try {
+    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(base64));
+  } catch {
+    return null;
+  }
+}
+
+function TopNavBar({ onNavigate, role, currentUser, unreadCount }) {
+  const [navQuery, setNavQuery] = useState("");
+  const submitSearch = (e) => {
+    e.preventDefault();
+    if (navQuery.trim().length >= 2) onNavigate("globalsearch", { q: navQuery.trim() });
+  };
+
   return (
     <header className="h-16 flex justify-between items-center w-full px-8 sticky top-0 z-50 backdrop-blur-md bg-opacity-90 bg-primary border-b border-primary-container/20">
       <div className="flex items-center gap-10">
@@ -47,17 +62,17 @@ function TopNavBar({ onNavigate, role }) {
           <button onClick={() => onNavigate("globalsearch")} className="text-[11px] font-black uppercase tracking-widest text-slate-300 hover:text-white transition-colors">Search</button>
         </nav>
       </div>
-      <div className="flex-grow max-w-xl px-12 hidden md:block">
+      <form onSubmit={submitSearch} className="flex-grow max-w-xl px-12 hidden md:block">
         <div className="relative">
-          <input className="w-full bg-primary-container/50 text-white placeholder-slate-400 text-sm px-4 py-2 pl-10 rounded-lg border-0 ring-1 ring-white/10 focus:ring-2 focus:ring-tertiary-fixed-dim transition-all" placeholder="Search insights and assets..." type="text"/>
+          <input value={navQuery} onChange={(e) => setNavQuery(e.target.value)} className="w-full bg-primary-container/50 text-white placeholder-slate-400 text-sm px-4 py-2 pl-10 rounded-lg border-0 ring-1 ring-white/10 focus:ring-2 focus:ring-tertiary-fixed-dim transition-all" placeholder="Search gigs, jobs, and skills..." type="text"/>
           <span className="material-symbols-outlined absolute left-3 top-2.5 text-slate-400 text-sm">search</span>
         </div>
-      </div>
+      </form>
       <div className="flex items-center gap-6">
         <div className="flex items-center gap-2">
           <button onClick={() => onNavigate("notifications")} className="p-2 text-slate-300 hover:text-white hover:bg-white/10 rounded-full transition-all relative">
             <span className="material-symbols-outlined">notifications</span>
-            <span className="absolute top-2 right-2 w-2 h-2 bg-error rounded-full"></span>
+            {unreadCount > 0 && <span className="absolute top-1 right-1 min-w-4 h-4 px-1 bg-error rounded-full text-[9px] leading-4 text-white font-black">{unreadCount}</span>}
           </button>
           <button className="p-2 text-slate-300 hover:text-white hover:bg-white/10 rounded-full transition-all">
             <span className="material-symbols-outlined">help_outline</span>
@@ -65,8 +80,8 @@ function TopNavBar({ onNavigate, role }) {
         </div>
         <div className="flex items-center gap-3 pl-4 border-l border-white/10">
           <div className="text-right hidden sm:block">
-            <p className="text-[10px] font-bold text-white uppercase tracking-wider">{role === 'client' ? 'Client Admin' : 'Expert Freelancer'}</p>
-            <p className="text-[9px] font-medium text-slate-400 uppercase">Enterprise Mode</p>
+            <p className="text-[10px] font-bold text-white uppercase tracking-wider">{currentUser?.name || (role === 'client' ? 'Client Admin' : 'Expert Freelancer')}</p>
+            <p className="text-[9px] font-medium text-slate-400 uppercase">{role} Mode</p>
           </div>
           <img alt="Profile" className="w-9 h-9 rounded-lg border border-white/20 object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBtwC6ZvX7GXW7EW5hevkPqMO6D95liKdTdhwlvx3v18pOpo93ZHhS0xAbYzYA-PTeYjjEsA7TDRm0W9Hvnl64vqVk00xVYJlN0kqCyZEKSBB3pdk4EmpY2urQH0TEc61HHruthRJuRhlJaGhCx_guVJzedsWuyynwDwFGILeeeof4ePBzOSGDutowFDU2i4L_9mmWN4uHBhs6CB_oUJnbCgJC-m3F_MoN5PWrUB_My5QgGSLuatV73mQC_Z78bVxt_igpzDaGCc48"/>
         </div>
@@ -163,7 +178,52 @@ const ROUTE_ALIASES = {
 // ─────────────────────────────────────────────────────────────────────────────
 // Home Dashboard — Role-specific experience
 // ─────────────────────────────────────────────────────────────────────────────
-function Home({ onNavigate, backendStatus, role }) {
+function Home({ onNavigate, backendStatus, role, currentUser, onMetricsChange }) {
+  const [metrics, setMetrics] = useState({ projects: 0, unread: 0, money: 0, primary: 0, secondary: 0 });
+  const [metricsError, setMetricsError] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    async function loadMetrics() {
+      setMetricsError("");
+      try {
+        const projectRes = await projectApi.myProjects();
+        const projects = projectRes.success ? (projectRes.data || []) : [];
+        let next = {
+          projects: projects.length,
+          unread: 0,
+          money: projects.reduce((sum, p) => sum + Number(p.total_amount || p.total_budget || p.amount || 0), 0),
+          primary: 0,
+          secondary: 0,
+        };
+
+        if (role === "client") {
+          const jobsRes = await jobApi.dashboard();
+          const jobs = jobsRes.success ? (jobsRes.data || []) : [];
+          next.primary = jobs.length;
+          next.secondary = jobs.reduce((sum, job) => sum + Number(job.bids_count || 0), 0);
+          next.unread = jobs.filter((job) => Number(job.bids_count || 0) > 0 && job.status === "open").length;
+        } else {
+          const [gigsRes, bidsRes] = await Promise.all([gigApi.myGigs(), bidApi.myBids()]);
+          const gigs = gigsRes.success ? (gigsRes.data || []) : [];
+          const bids = bidsRes.success ? (bidsRes.data || []) : [];
+          next.primary = gigs.length;
+          next.secondary = bids.length;
+          next.unread = bids.filter((bid) => ["accepted", "rejected"].includes(bid.status)).length;
+        }
+
+        if (alive) {
+          setMetrics(next);
+          onMetricsChange?.(next);
+        }
+      } catch (e) {
+        if (alive) setMetricsError(e.message);
+      }
+    }
+    loadMetrics();
+    return () => { alive = false; };
+  }, [role, currentUser?.id]);
+
   const freelancerCards = [
     { key: "myprojects", label: "Active Projects",  icon: "🚀", desc: "Track your ongoing work and milestones." },
     { key: "mygigs",     label: "Manage Gigs",      icon: "📋", desc: "Edit your services and view performance." },
@@ -195,7 +255,8 @@ function Home({ onNavigate, backendStatus, role }) {
         <div className="flex justify-between items-end">
           <div>
             <span className="text-[0.6875rem] font-bold tracking-[0.05em] uppercase text-on-tertiary-container mb-2 block">System Analytics</span>
-            <h2 className="text-3xl font-extrabold tracking-tight text-primary">Welcome, {role === 'client' ? 'Business Client' : 'Expert Freelancer'}</h2>
+            <h2 className="text-3xl font-extrabold tracking-tight text-primary">Welcome, {currentUser?.name || (role === 'client' ? 'Business Client' : 'Expert Freelancer')}</h2>
+            <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-2">{currentUser?.id}</p>
           </div>
           <div className="flex items-center gap-3 bg-surface-container px-4 py-2 rounded-full">
             <span className="w-2.5 h-2.5 rounded-full" style={{ background: st.dot }}></span>
@@ -232,7 +293,7 @@ function Home({ onNavigate, backendStatus, role }) {
             <div className="bg-primary text-white p-6 rounded-xl relative overflow-hidden">
               <div className="relative z-10">
                 <span className="text-[10px] font-bold uppercase tracking-widest opacity-70">Active Projects</span>
-                <p className="text-3xl font-black mt-1">4 Running</p>
+                <p className="text-3xl font-black mt-1">{metrics.projects} Running</p>
               </div>
               <div className="absolute -right-4 -bottom-4 opacity-10">
                 <span className="material-symbols-outlined text-8xl" style={{ fontVariationSettings: "'FILL' 1" }}>rocket_launch</span>
@@ -241,14 +302,15 @@ function Home({ onNavigate, backendStatus, role }) {
             <div className="bg-surface-container-low p-6 rounded-xl border border-outline-variant/10">
               <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Unread Notifications</span>
               <div className="flex items-center gap-4 mt-2">
-                <p className="text-2xl font-black text-primary">2</p>
+                <p className="text-2xl font-black text-primary">{metrics.unread}</p>
                 <button onClick={() => onNavigate("notifications")} className="text-[10px] font-bold uppercase text-tertiary-container hover:underline">View All</button>
               </div>
             </div>
             <div className="bg-tertiary-container text-white p-6 rounded-xl border border-outline-variant/10">
-              <span className="text-[10px] font-bold uppercase tracking-widest opacity-70">Wallet Balance</span>
-              <p className="text-2xl font-black mt-1">PKR 12,400</p>
+              <span className="text-[10px] font-bold uppercase tracking-widest opacity-70">{role === "client" ? "Posted Jobs / Bids" : "Gigs / Proposals"}</span>
+              <p className="text-2xl font-black mt-1">{metrics.primary} / {metrics.secondary}</p>
             </div>
+            {metricsError && <p className="text-xs font-bold text-error">{metricsError}</p>}
           </div>
         </div>
       </section>
@@ -259,7 +321,19 @@ function Home({ onNavigate, backendStatus, role }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Role Selection Screen
 // ─────────────────────────────────────────────────────────────────────────────
-function RoleSelection({ onSelectRole }) {
+function RoleSelection({ onSelectUser }) {
+  const clients = DEV_USERS.filter((user) => user.role === "client");
+  const freelancers = DEV_USERS.filter((user) => user.role === "freelancer");
+  const UserButton = ({ user }) => (
+    <button onClick={() => onSelectUser(user)} className="w-full flex items-center justify-between px-4 py-3 rounded-lg bg-surface-container-low hover:bg-primary-fixed text-left transition-colors">
+      <span>
+        <span className="block text-sm font-black text-primary uppercase">{user.name}</span>
+        <span className="block text-[10px] font-bold text-slate-500">{user.id.slice(0, 8)}...</span>
+      </span>
+      <span className="material-symbols-outlined text-primary">login</span>
+    </button>
+  );
+
   return (
     <div className="min-h-screen bg-surface flex flex-col items-center justify-center p-6">
       <div className="mb-12 text-center">
@@ -270,20 +344,22 @@ function RoleSelection({ onSelectRole }) {
       <h2 className="text-2xl font-extrabold mb-8 text-primary tracking-tight">Select Your Perspective</h2>
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl w-full">
-        <div onClick={() => onSelectRole("freelancer")} className="bg-surface-container-lowest p-10 rounded-2xl border-2 border-transparent hover:border-tertiary-fixed-dim hover:shadow-2xl transition-all cursor-pointer text-center group">
+        <div className="bg-surface-container-lowest p-8 rounded-2xl border-2 border-transparent hover:border-tertiary-fixed-dim hover:shadow-2xl transition-all text-center group">
           <div className="w-20 h-20 bg-surface-container-high rounded-full flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform">
             <span className="text-4xl">👩‍💻</span>
           </div>
           <h3 className="text-xl font-black text-primary uppercase mb-3">Expert Freelancer</h3>
           <p className="text-sm text-slate-500 leading-relaxed">Create professional gigs, browse high-value jobs, and scale your business with enterprise tools.</p>
+          <div className="mt-6 space-y-2">{freelancers.map((user) => <UserButton key={user.id} user={user} />)}</div>
         </div>
         
-        <div onClick={() => onSelectRole("client")} className="bg-surface-container-lowest p-10 rounded-2xl border-2 border-transparent hover:border-primary-fixed-dim hover:shadow-2xl transition-all cursor-pointer text-center group">
+        <div className="bg-surface-container-lowest p-8 rounded-2xl border-2 border-transparent hover:border-primary-fixed-dim hover:shadow-2xl transition-all text-center group">
           <div className="w-20 h-20 bg-surface-container-high rounded-full flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform">
             <span className="text-4xl">🏢</span>
           </div>
           <h3 className="text-xl font-black text-primary uppercase mb-3">Business Client</h3>
           <p className="text-sm text-slate-500 leading-relaxed">Hire top-tier talent, post complex project requirements, and manage your editorial workflow.</p>
+          <div className="mt-6 space-y-2">{clients.map((user) => <UserButton key={user.id} user={user} />)}</div>
         </div>
       </div>
     </div>
@@ -298,6 +374,8 @@ export default function App() {
   const [screenParams, setScreenParams] = useState({});
   const [backendStatus, setBackendStatus] = useState("checking");
   const [role, setRole] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [dashboardMetrics, setDashboardMetrics] = useState({ unread: 0 });
 
   // Initialize API layer health check on mount
   useEffect(() => {
@@ -305,11 +383,16 @@ export default function App() {
       // First try to restore existing token and role from session storage
       const stored = loadStoredToken();
       if (stored) {
-        try {
-          const payloadStr = atob(stored.split('.')[1]);
-          const payload = JSON.parse(payloadStr);
-          if (payload.role) setRole(payload.role);
-        } catch(e) { /* ignore */ }
+        const payload = decodeJwtPayload(stored);
+        if (payload?.role) {
+          setRole(payload.role);
+          setCurrentUser({
+            id: payload.id || payload.uuid,
+            role: payload.role,
+            name: payload.name || payload.email || payload.role,
+            email: payload.email,
+          });
+        }
       }
 
       try {
@@ -322,11 +405,13 @@ export default function App() {
     initApi();
   }, []);
 
-  const handleSelectRole = async (selectedRole) => {
+  const handleSelectUser = async (selectedUser) => {
     try {
-      const devToken = await getDevToken(selectedRole);
+      const devToken = await getDevTokenForUser(selectedUser);
       setAuthToken(devToken);
-      setRole(selectedRole);
+      setRole(selectedUser.role);
+      setCurrentUser(selectedUser);
+      setDashboardMetrics({ unread: 0 });
       setScreen("home");
     } catch (e) {
       console.warn("[API] Could not generate dev token:", e.message);
@@ -336,6 +421,8 @@ export default function App() {
   const onNavigate = (key, params = {}) => {
     if (key === "switch_role") {
       setRole(null);
+      setCurrentUser(null);
+      setDashboardMetrics({ unread: 0 });
       setScreen("home");
       setScreenParams({});
       setAuthToken(null);
@@ -349,15 +436,17 @@ export default function App() {
   };
 
   if (!role) {
-    return <RoleSelection onSelectRole={handleSelectRole} />;
+    return <RoleSelection onSelectUser={handleSelectUser} />;
   }
 
   const Screen = screen === "home" ? Home : SCREENS[screen];
-  const activeComponent = Screen ? <Screen onNavigate={onNavigate} params={screenParams} role={role} backendStatus={backendStatus} /> : <Home onNavigate={onNavigate} backendStatus={backendStatus} role={role} />;
+  const activeComponent = Screen
+    ? <Screen onNavigate={onNavigate} params={screenParams} role={role} currentUser={currentUser} backendStatus={backendStatus} onMetricsChange={setDashboardMetrics} />
+    : <Home onNavigate={onNavigate} backendStatus={backendStatus} role={role} currentUser={currentUser} onMetricsChange={setDashboardMetrics} />;
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <TopNavBar onNavigate={onNavigate} role={role} />
+      <TopNavBar onNavigate={onNavigate} role={role} currentUser={currentUser} unreadCount={dashboardMetrics.unread || 0} />
       <div className="flex flex-1">
         <SideNavBar onNavigate={onNavigate} role={role} />
         <main className="ml-64 w-full flex flex-col min-h-screen">
