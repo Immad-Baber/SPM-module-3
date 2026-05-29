@@ -16,6 +16,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./database/seed.sql:/docker-entrypoint-initdb.d/seed.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d nfasvp_module3"]
       interval: 10s
@@ -61,6 +62,8 @@ services:
       - "5173:5173"
     env_file:
       - ./frontend/.env
+    environment:
+      VITE_PROXY_TARGET: http://backend:4003
     volumes:
       - ./frontend:/app
       - /app/node_modules
