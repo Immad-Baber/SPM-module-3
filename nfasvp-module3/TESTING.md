@@ -66,7 +66,7 @@ playwright-report/index.html
 Current verified result:
 
 ```text
-9 E2E tests passed
+10 E2E tests passed
 0 failed
 ```
 
@@ -75,6 +75,7 @@ Covered E2E flows:
 - client dashboard changes per selected seeded user
 - gig marketplace search returns services
 - freelancer creates a gig in the UI and a client can find it from another account
+- client opens a gig detail page from the marketplace
 - freelancer project search filters visible projects
 - client creates a job in the UI and a freelancer can find it from another account
 - global search returns both gig and job result sections

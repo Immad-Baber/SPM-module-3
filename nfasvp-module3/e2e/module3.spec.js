@@ -115,6 +115,38 @@ test.describe('NFASVP Module 3 E2E', () => {
     await expect(page.getByText(gigTitle).first()).toBeVisible();
   });
 
+  test('client can open a gig detail page from the marketplace', async ({ page, request }) => {
+    const stamp = Date.now();
+    const categoryId = await getWebCategoryId(request);
+    const gigTitle = `View Detail Gig ${stamp}`;
+
+    await apiJson(request, 'post', '/gigs', {
+      user: USERS.freelancer4,
+      data: {
+        title: gigTitle,
+        description: 'Detail page E2E gig with real required skill objects and pricing tiers.',
+        category_id: categoryId,
+        required_skills: ['React', 'Detail View'],
+        status: 'live',
+        pricing_tiers: [
+          { tier: 'basic', package_name: 'Starter', description: 'Basic detail package', price: 175, delivery_days: 3 },
+          { tier: 'standard', package_name: 'Growth', description: 'Standard detail package', price: 350, delivery_days: 5 },
+          { tier: 'premium', package_name: 'Scale', description: 'Premium detail package', price: 700, delivery_days: 8 },
+        ],
+      },
+    });
+
+    await chooseUser(page, 'Client 1');
+    await page.getByRole('button', { name: /Marketplace/i }).first().click();
+    await page.getByPlaceholder(/Search services/i).fill(gigTitle);
+    await page.getByText(gigTitle).first().click();
+
+    await expect(page.getByRole('heading', { name: gigTitle })).toBeVisible();
+    await expect(page.getByText(/Service Mandate/i)).toBeVisible();
+    await expect(page.getByText(/React/i).first()).toBeVisible();
+    await expect(page.getByText(/PKR 175/i)).toBeVisible();
+  });
+
   test('freelancer project search filters visible projects', async ({ page }) => {
     await chooseUser(page, 'Freelancer 2');
     await page.getByRole('button', { name: /Active Projects/i }).first().click();
