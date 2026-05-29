@@ -259,7 +259,9 @@ export const projectApi = {
 
   /** GET /api/v1/projects — Get logged-in user's projects */
   myProjects: (filters = {}) => {
-    const params = new URLSearchParams(filters);
+    const params = new URLSearchParams(
+      Object.fromEntries(Object.entries(filters).filter(([, v]) => v != null && v !== ''))
+    );
     return request(`/projects${params.toString() ? `?${params}` : ''}`);
   },
 

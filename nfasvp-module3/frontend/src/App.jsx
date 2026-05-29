@@ -70,7 +70,7 @@ function TopNavBar({ onNavigate, role, currentUser, unreadCount }) {
       </form>
       <div className="flex items-center gap-6">
         <div className="flex items-center gap-2">
-          <button onClick={() => onNavigate("notifications")} className="p-2 text-slate-300 hover:text-white hover:bg-white/10 rounded-full transition-all relative">
+          <button aria-label="Notifications" onClick={() => onNavigate("notifications")} className="p-2 text-slate-300 hover:text-white hover:bg-white/10 rounded-full transition-all relative">
             <span className="material-symbols-outlined">notifications</span>
             {unreadCount > 0 && <span className="absolute top-1 right-1 min-w-4 h-4 px-1 bg-error rounded-full text-[9px] leading-4 text-white font-black">{unreadCount}</span>}
           </button>
